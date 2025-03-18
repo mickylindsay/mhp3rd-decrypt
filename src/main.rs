@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 
+// Decoding/encoding table and encryption/decryption keys courtesy of https://github.com/svanheulen/mhef/blob/8a5132fb7024103ba6271371b81060a55a437651/mhef/psp.py#L79
 const DECRYPT_TABLE: [u8; 256] = [
     0xCB, 0x96, 0x85, 0xA6, 0x5F, 0x3E, 0xAB, 0x03, 0x50, 0xB7, 0x9C, 0x5C, 0xB2, 0x40, 0xEF, 0xF6,
     0xFF, 0x61, 0x15, 0x29, 0xA2, 0xF1, 0xEC, 0x52, 0x35, 0x28, 0xD9, 0x68, 0x24, 0x36, 0xC4, 0x74,
@@ -23,7 +24,8 @@ const DECRYPT_TABLE: [u8; 256] = [
 const DEFAULT_KEY: [u16; 2] = [0x2345, 0x7F8D];
 const KEY_MODULO: [u16; 2] = [0xFFD9, 0xFFF1];
 
-fn generate_encrypt_table(decrypt_table: [u8; 256]) -> [u8; 256] {
+// Useful if I ever want to reconstruct the BIN file
+fn _generate_encrypt_table(decrypt_table: [u8; 256]) -> [u8; 256] {
     let mut encrypt_table: [u8; 256] = [0u8; 256];
     for (i, val) in decrypt_table.iter().enumerate() {
         encrypt_table[*val as usize] = i as u8;
@@ -134,7 +136,7 @@ fn main() {
         prev = data
     }
 
-    for index in (0..file_indexes.len() - 1) {
+    for index in 0..file_indexes.len() - 1 {
         decrypt_file(&mut in_file, &file_indexes, index);
         rename_file(index);
     }
