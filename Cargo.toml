@@ -1,0 +1,6 @@
+[package]
+name = "mhp3rd_decrypt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
