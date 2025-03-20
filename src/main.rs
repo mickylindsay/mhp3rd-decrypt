@@ -23,6 +23,9 @@ const DECRYPT_TABLE: [u8; 256] = [
 
 const DEFAULT_KEY: [u16; 2] = [0x2345, 0x7F8D];
 const KEY_MODULO: [u16; 2] = [0xFFD9, 0xFFF1];
+const SKIPPED_FILE_INDEXES: [usize; 16] = [
+    18, 19, 20, 21, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+];
 
 // Useful if I ever want to reconstruct the BIN file
 fn _generate_encrypt_table(decrypt_table: [u8; 256]) -> [u8; 256] {
@@ -57,6 +60,13 @@ fn translate_buffer(buffer: [u8; 4]) -> u32 {
         + ((DECRYPT_TABLE[buffer[3] as usize] as u32) << 24);
 }
 
+fn buffer_to_u32(buffer: [u8; 4]) -> u32 {
+    return buffer[0] as u32
+        + ((buffer[1] as u32) << 8)
+        + ((buffer[2] as u32) << 16)
+        + ((buffer[3] as u32) << 24);
+}
+
 fn header_to_file_format(header: &[u8]) -> &'static str {
     match header {
         [0x89, 0x50, 0x4E, 0x47] => "png",
@@ -65,20 +75,20 @@ fn header_to_file_format(header: &[u8]) -> &'static str {
         [0x4D, 0x49, 0x47, 0x2e] => "gim", //PSP image format https://wiki.vg-resource.com/GIM. Open with Noesis
         [0x4D, 0x57, 0x6F, 0x33] => "mwo3", // Code overlay? ovl file is referenced in the data? https://gtamods.com/wiki/PS2_Code_Overlay
         [0x2E, 0x54, 0x4D, 0x48] => "tmh", // Some kind of texture file? https://forums.ps2dev.org/viewtopic.php?t=12427
+        [0x50, 0x53, 0x4D, 0x46] => "pmf", // Video file https://www.psdevwiki.com/psp/PMF
         _ => "bin",
     }
 }
 
-fn decrypt_file(in_file: &mut File, toc: &Vec<u32>, index: usize) {
+fn decrypt_file(in_file: &mut File, start_block: u32, end_block: u32, index: usize) {
     let mut out_file = File::create(format!("out/{}.bin", index)).unwrap();
     let mut buffer: [u8; 1024] = [0; 1024];
 
-    let start = toc[index];
-    let mut remaining_bytes = ((toc[index + 1] - start) * 2048) as usize;
-    let mut key = initialize_key(start);
+    let mut remaining_bytes = ((end_block - start_block) * 2048) as usize;
+    let mut key = initialize_key(start_block);
 
     in_file
-        .seek(SeekFrom::Start((start * 2048) as u64))
+        .seek(SeekFrom::Start((start_block * 2048) as u64))
         .expect("Invalid seek to position of input file.");
 
     while remaining_bytes > 0 {
@@ -93,6 +103,23 @@ fn decrypt_file(in_file: &mut File, toc: &Vec<u32>, index: usize) {
     }
 }
 
+fn separate_file(in_file: &mut File, start_block: u32, end_block: u32, index: usize) {
+    let mut out_file = File::create(format!("out/{}.bin", index)).unwrap();
+    let mut buffer: [u8; 1024] = [0; 1024];
+
+    let mut remaining_bytes = ((end_block - start_block) * 2048) as usize;
+
+    in_file
+        .seek(SeekFrom::Start((start_block * 2048) as u64))
+        .expect("Invalid seek to position of input file.");
+
+    while remaining_bytes > 0 {
+        let read_size = in_file.read(&mut buffer).unwrap();
+        remaining_bytes = remaining_bytes - read_size;
+        out_file.write_all(&buffer).unwrap();
+    }
+}
+
 fn rename_file(file_index: usize) {
     let src = format!("out/{}.bin", file_index);
     let mut decrypted_file = File::open(src.clone()).unwrap();
@@ -100,10 +127,6 @@ fn rename_file(file_index: usize) {
     decrypted_file.read(&mut header_buffer).unwrap();
     drop(decrypted_file); // manually close file, as will moved based on filetype
     let format = header_to_file_format(&header_buffer[0..4]);
-    if format == "bin" {
-        // Printing the first 4 bytes of files not yet classified
-        println!("bin\t{}\t{:X?}", file_index, header_buffer);
-    }
     let filename = format!("out/{}.{}", file_index, format);
     fs::rename(src, filename).unwrap();
 }
@@ -112,32 +135,50 @@ fn main() {
     // println!("{:X?}", generate_encrypt_table(DECRYPT_TABLE));
 
     fs::create_dir_all("out").unwrap();
-    let mut key = initialize_key(0);
-    let mut out_file = File::create("out/toc.bin").unwrap();
     let mut in_file = File::open("DATA.BIN").unwrap();
     let mut buffer: [u8; 4] = [0; 4];
 
     let mut prev = 0x0;
     let mut file_indexes = Vec::new();
 
+    in_file.read(&mut buffer).unwrap();
+    let key = next_key(initialize_key(0));
+    let data = translate_buffer(buffer) ^ key;
+    decrypt_file(&mut in_file, 0, data, 0);
+
     // Keep reading 4 byte values until they stop increasing.
     // That is the end of the Table of Contents
+    let mut toc_file = File::open("out/0.bin").unwrap();
     loop {
-        let _size = in_file.read(&mut buffer).unwrap();
+        let _size = toc_file.read(&mut buffer).unwrap();
 
-        key = next_key(key);
-        let data = translate_buffer(buffer) ^ key;
-
+        let data = buffer_to_u32(buffer);
         if data < prev {
             break;
         }
         file_indexes.push(data);
-        out_file.write_all(&data.to_le_bytes()).unwrap();
         prev = data
     }
 
     for index in 0..file_indexes.len() - 1 {
-        decrypt_file(&mut in_file, &file_indexes, index);
-        rename_file(index);
+        let file_index = index + 1;
+        if SKIPPED_FILE_INDEXES.contains(&file_index) {
+            println!("{}\tSkipping decryption", index);
+            separate_file(
+                &mut in_file,
+                file_indexes[index],
+                file_indexes[file_index],
+                index + 1,
+            );
+        } else {
+            println!("{}\tDecrypting", index);
+            decrypt_file(
+                &mut in_file,
+                file_indexes[index],
+                file_indexes[file_index],
+                index + 1,
+            );
+        }
+        rename_file(index + 1); // Offset by 1. 0.bin is ToC
     }
 }

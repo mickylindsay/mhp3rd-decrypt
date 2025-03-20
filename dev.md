@@ -87,3 +87,14 @@ Looks like .hack modding also uses this format and ye they are code binaries - h
 TMH file searches gave me this about half a page down...
 https://github.com/Kurogami2134/MHP3rd-Game-FIle-List pssh somebody already did so much
 https://fucomplete.github.io/ oh god there is a whole community already 
+
+# Mar 20, 2025
+Included skipping the files that arnt encrypted pulled from here https://github.com/svanheulen/mhef/blob/8a5132fb7024103ba6271371b81060a55a437651/mhef/psp.py#L109C28-L109C90
+
+Fixed Table of Contents file cut off early. necessary for repacking the files back into DATA.BIN
+
+Opening PMF video file in VLC is full of artifcats and the audio doesnt work. Thought it would work b/c there is a decade old VLC issue for it https://code.videolan.org/videolan/vlc/-/issues/10184
+
+But found some dude's tool for extracting then repacking with ffmpeg https://github.com/TeamPBCN/pmftools
+
+I know have the credits, opening, and all the movies extracted.
