@@ -98,3 +98,8 @@ Opening PMF video file in VLC is full of artifcats and the audio doesnt work. Th
 But found some dude's tool for extracting then repacking with ffmpeg https://github.com/TeamPBCN/pmftools
 
 I know have the credits, opening, and all the movies extracted.
+
+Got psp ref docs from the monhun modding discord https://hitmen.c02.at/files/yapspd/psp_doc/chap26.html#sec26.8
+
+# Mar 21, 2025
+CSV of filenames pulled from https://github.com/Kurogami2134/MHP3rd-Game-FIle-List/blob/main/files.csv and manual names for png/gif/pmf files

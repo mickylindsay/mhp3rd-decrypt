@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 
 // Decoding/encoding table and encryption/decryption keys courtesy of https://github.com/svanheulen/mhef/blob/8a5132fb7024103ba6271371b81060a55a437651/mhef/psp.py#L79
 const DECRYPT_TABLE: [u8; 256] = [
@@ -67,21 +67,8 @@ fn buffer_to_u32(buffer: [u8; 4]) -> u32 {
         + ((buffer[3] as u32) << 24);
 }
 
-fn header_to_file_format(header: &[u8]) -> &'static str {
-    match header {
-        [0x89, 0x50, 0x4E, 0x47] => "png",
-        [0x47, 0x49, 0x46, 0x38] => "gif",
-        [0x52, 0x49, 0x46, 0x46] => "wav",
-        [0x4D, 0x49, 0x47, 0x2e] => "gim", //PSP image format https://wiki.vg-resource.com/GIM. Open with Noesis
-        [0x4D, 0x57, 0x6F, 0x33] => "mwo3", // Code overlay? ovl file is referenced in the data? https://gtamods.com/wiki/PS2_Code_Overlay
-        [0x2E, 0x54, 0x4D, 0x48] => "tmh", // Some kind of texture file? https://forums.ps2dev.org/viewtopic.php?t=12427
-        [0x50, 0x53, 0x4D, 0x46] => "pmf", // Video file https://www.psdevwiki.com/psp/PMF
-        _ => "bin",
-    }
-}
-
-fn decrypt_file(in_file: &mut File, start_block: u32, end_block: u32, index: usize) {
-    let mut out_file = File::create(format!("out/{}.bin", index)).unwrap();
+fn decrypt_file(in_file: &mut File, out_filename: &str, start_block: u32, end_block: u32) {
+    let mut out_file = File::create(out_filename).unwrap();
     let mut buffer: [u8; 1024] = [0; 1024];
 
     let mut remaining_bytes = ((end_block - start_block) * 2048) as usize;
@@ -103,8 +90,8 @@ fn decrypt_file(in_file: &mut File, start_block: u32, end_block: u32, index: usi
     }
 }
 
-fn separate_file(in_file: &mut File, start_block: u32, end_block: u32, index: usize) {
-    let mut out_file = File::create(format!("out/{}.bin", index)).unwrap();
+fn separate_file(in_file: &mut File, out_filename: &str, start_block: u32, end_block: u32) {
+    let mut out_file = File::create(out_filename).unwrap();
     let mut buffer: [u8; 1024] = [0; 1024];
 
     let mut remaining_bytes = ((end_block - start_block) * 2048) as usize;
@@ -120,15 +107,11 @@ fn separate_file(in_file: &mut File, start_block: u32, end_block: u32, index: us
     }
 }
 
-fn rename_file(file_index: usize) {
-    let src = format!("out/{}.bin", file_index);
-    let mut decrypted_file = File::open(src.clone()).unwrap();
-    let mut header_buffer: [u8; 4] = [0; 4];
-    decrypted_file.read(&mut header_buffer).unwrap();
-    drop(decrypted_file); // manually close file, as will moved based on filetype
-    let format = header_to_file_format(&header_buffer[0..4]);
-    let filename = format!("out/{}.{}", file_index, format);
-    fs::rename(src, filename).unwrap();
+fn read_next_filename(reader: &mut BufReader<File>) -> String {
+    let mut buffer = String::new();
+    let _size = reader.read_line(&mut buffer);
+    let filename = buffer.split_once(",").unwrap().1.trim();
+    return format!("{}/{}", "out", filename);
 }
 
 fn main() {
@@ -136,6 +119,8 @@ fn main() {
 
     fs::create_dir_all("out").unwrap();
     let mut in_file = File::open("DATA.BIN").unwrap();
+    let filenames_file = File::open("filenames.csv").unwrap();
+    let mut filenames_reader = BufReader::new(filenames_file);
     let mut buffer: [u8; 4] = [0; 4];
 
     let mut prev = 0x0;
@@ -144,11 +129,13 @@ fn main() {
     in_file.read(&mut buffer).unwrap();
     let key = next_key(initialize_key(0));
     let data = translate_buffer(buffer) ^ key;
-    decrypt_file(&mut in_file, 0, data, 0);
+
+    let index_filename = read_next_filename(&mut filenames_reader);
+    decrypt_file(&mut in_file, &index_filename, 0, data);
 
     // Keep reading 4 byte values until they stop increasing.
     // That is the end of the Table of Contents
-    let mut toc_file = File::open("out/0.bin").unwrap();
+    let mut toc_file = File::open(index_filename).unwrap();
     loop {
         let _size = toc_file.read(&mut buffer).unwrap();
 
@@ -161,24 +148,26 @@ fn main() {
     }
 
     for index in 0..file_indexes.len() - 1 {
+        let filename = read_next_filename(&mut filenames_reader);
+        let (directories, _) = filename.rsplit_once("/").unwrap();
+        fs::create_dir_all(directories).unwrap();
         let file_index = index + 1;
         if SKIPPED_FILE_INDEXES.contains(&file_index) {
-            println!("{}\tSkipping decryption", index);
+            println!("Copying {}", filename);
             separate_file(
                 &mut in_file,
+                &filename,
                 file_indexes[index],
                 file_indexes[file_index],
-                index + 1,
             );
         } else {
-            println!("{}\tDecrypting", index);
+            println!("Decrypting {}", filename);
             decrypt_file(
                 &mut in_file,
+                &filename,
                 file_indexes[index],
                 file_indexes[file_index],
-                index + 1,
             );
         }
-        rename_file(index + 1); // Offset by 1. 0.bin is ToC
     }
 }
